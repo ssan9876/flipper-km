@@ -25,4 +25,6 @@ typedef struct {
     FuriMutex* state_mutex;
     size_t pending_len;
     bool awaiting_confirm;
+
+    char layout_path[128];
 } KmApp;

@@ -8,6 +8,9 @@
 
 #include "km_bridge_i.h"
 #include "km_cli.h"
+#include "km_layout_file.h"
+
+#include <dialogs/dialogs.h>
 
 static void km_draw_callback(Canvas* canvas, void* ctx) {
     KmApp* app = ctx;
@@ -31,8 +34,33 @@ static void km_draw_callback(Canvas* canvas, void* ctx) {
     } else {
         canvas_draw_str(
             canvas, 2, 28, furi_hal_hid_is_connected() ? "USB: ready" : "USB: no host");
-        canvas_draw_str(canvas, 2, 40, "Waiting for phone");
+
+        const char* name = app->layout_path[0] ? strrchr(app->layout_path, '/') : NULL;
+        char line[32];
+        snprintf(line, sizeof(line), "Layout: %s", name ? name + 1 : "US (default)");
+        canvas_draw_str(canvas, 2, 40, line);
+        canvas_draw_str(canvas, 2, 52, "OK = change layout");
     }
+}
+
+static void km_pick_layout(KmApp* app) {
+    DialogsApp* dialogs = furi_record_open(RECORD_DIALOGS);
+    FuriString* path = furi_string_alloc_set(KM_LAYOUT_DIR);
+
+    DialogsFileBrowserOptions options;
+    dialog_file_browser_set_basic_options(&options, ".kl", NULL);
+    options.base_path = KM_LAYOUT_DIR;
+
+    if(dialog_file_browser_show(dialogs, path, path, &options)) {
+        if(km_layout_file_load(&app->layout, furi_string_get_cstr(path))) {
+            strncpy(app->layout_path, furi_string_get_cstr(path), sizeof(app->layout_path) - 1);
+            app->layout_path[sizeof(app->layout_path) - 1] = '\0';
+            km_layout_settings_save(app->layout_path);
+        }
+    }
+
+    furi_string_free(path);
+    furi_record_close(RECORD_DIALOGS);
 }
 
 static void km_input_callback(InputEvent* event, void* ctx) {
@@ -52,6 +80,13 @@ int32_t km_bridge_app(void* p) {
     app->pending_len = 0;
 
     km_layout_set_default(&app->layout, hid_asciimap, sizeof(hid_asciimap) / sizeof(uint16_t));
+    app->layout_path[0] = '\0';
+    if(km_layout_settings_load(app->layout_path, sizeof(app->layout_path))) {
+        if(!km_layout_file_load(&app->layout, app->layout_path)) {
+            /* Bad or missing file: keep the US default. */
+            app->layout_path[0] = '\0';
+        }
+    }
 
     /* Take over USB as an HID keyboard, remembering what to put back. */
     app->usb_prev = furi_hal_usb_get_config();
@@ -79,6 +114,8 @@ int32_t km_bridge_app(void* p) {
                     } else if(event.key == InputKeyBack) {
                         furi_event_flag_set(app->confirm_flags, KM_FLAG_CANCEL);
                     }
+                } else if(event.key == InputKeyOk) {
+                    km_pick_layout(app);
                 } else if(event.key == InputKeyBack) {
                     app->running = false;
                 }
