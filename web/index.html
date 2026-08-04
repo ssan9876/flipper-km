@@ -49,8 +49,27 @@ let tx = null;
 // throws a SecurityError even after a successful connect.
 // Bluefy does not always throw a real Error, so err.name/err.message can both
 // be undefined. Squeeze a useful string out of whatever actually arrives.
+// Bluefy throws raw CoreBluetooth error codes as numbers rather than Errors,
+// so err.name/err.message are both undefined. Translate the ones that actually
+// come up; anything else still reports its number.
+const CB_ERRORS = {
+  0: 'unknown',
+  1: 'invalid parameters',
+  2: 'invalid handle — iOS is holding a stale connection; re-pair to clear it',
+  3: 'not connected',
+  5: 'operation cancelled',
+  6: 'connection timeout — is the Flipper in range with Bluetooth on?',
+  7: 'peripheral disconnected',
+  10: 'connection failed',
+  14: 'pairing information removed — forget the Flipper in iOS Settings and re-pair',
+  15: 'encryption timed out — re-pair',
+};
+
 function describeError(err) {
   if (err === null || err === undefined) return 'unknown failure (nothing thrown)';
+  if (typeof err === 'number') {
+    return CB_ERRORS[err] ? `bluetooth error ${err}: ${CB_ERRORS[err]}` : `bluetooth error ${err}`;
+  }
   if (typeof err === 'string') return err;
   const name = err.name || err.constructor?.name || '';
   const message = err.message || err.toString?.() || '';
@@ -59,6 +78,21 @@ function describeError(err) {
     return JSON.stringify(err);
   } catch {
     return String(err);
+  }
+}
+
+// A stale iOS GATT handle fails the first connect but usually succeeds on a
+// second attempt after an explicit disconnect. Do that automatically.
+async function connectWithRetry(device) {
+  try {
+    return await device.gatt.connect();
+  } catch (err) {
+    status(`Retrying (${describeError(err)})…`);
+    try {
+      device.gatt.disconnect();
+    } catch { /* already disconnected */ }
+    await new Promise((r) => setTimeout(r, 1200));
+    return await device.gatt.connect();
   }
 }
 
@@ -85,7 +119,7 @@ async function connect(options) {
 
     step = 'connecting to GATT server';
     status('Connecting to GATT…');
-    const server = await device.gatt.connect();
+    const server = await connectWithRetry(device);
 
     step = 'finding serial service';
     status('Finding serial service…');
