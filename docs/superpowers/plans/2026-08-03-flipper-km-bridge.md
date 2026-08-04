@@ -769,6 +769,7 @@ Extract the `KmApp` struct so `km_cli.c` can see it. Create `fap/km_bridge_i.h`:
 ```c
 #pragma once
 #include <furi.h>
+#include <furi_hal_usb.h> /* required: this header declares a FuriHalUsbInterface* field */
 #include <gui/gui.h>
 #include <cli/cli.h>
 

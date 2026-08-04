@@ -6,16 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "km_layout.h"
-
-typedef struct {
-    Gui* gui;
-    ViewPort* view_port;
-    FuriMessageQueue* input_queue;
-    FuriHalUsbInterface* usb_prev;
-    KmLayout layout;
-    bool running;
-} KmApp;
+#include "km_bridge_i.h"
+#include "km_cli.h"
 
 static void km_draw_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
@@ -45,6 +37,8 @@ int32_t km_bridge_app(void* p) {
     app->usb_prev = furi_hal_usb_get_config();
     furi_hal_usb_set_config(&usb_hid, NULL);
 
+    km_cli_register(app);
+
     app->view_port = view_port_alloc();
     view_port_draw_callback_set(app->view_port, km_draw_callback, app);
     view_port_input_callback_set(app->view_port, km_input_callback, app);
@@ -60,6 +54,10 @@ int32_t km_bridge_app(void* p) {
         }
         view_port_update(app->view_port);
     }
+
+    /* MUST come first: a command left registered past app exit dereferences
+     * a dangling context pointer and crashes the Flipper on next invocation. */
+    km_cli_unregister(app);
 
     gui_remove_view_port(app->gui, app->view_port);
     furi_record_close(RECORD_GUI);
