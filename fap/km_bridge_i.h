@@ -27,4 +27,9 @@ typedef struct {
     bool awaiting_confirm;
 
     char layout_path[128];
+
+    /* False when furi_hal_usb_set_config was refused because the mode switch
+     * was locked -- typically because an RPC session (qFlipper, ufbt) held USB
+     * open. Surfaced on screen so the failure is visible rather than silent. */
+    bool usb_claimed;
 } KmApp;

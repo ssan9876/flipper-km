@@ -23,6 +23,7 @@
 <body>
   <button id="connect">Connect to Flipper</button>
   <button id="connect-any" class="secondary">Can't see it? Show all devices</button>
+  <button id="disconnect" class="secondary" hidden>Disconnect</button>
   <textarea id="text" placeholder="Paste here" autocomplete="off"
             autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
   <button id="send" disabled>Send</button>
@@ -46,26 +47,60 @@ let tx = null;
 // fallback for Flippers renamed to something other than "Flipper …".
 // optionalServices is mandatory in both cases: without it, getPrimaryService
 // throws a SecurityError even after a successful connect.
-async function connect(options) {
+// Bluefy does not always throw a real Error, so err.name/err.message can both
+// be undefined. Squeeze a useful string out of whatever actually arrives.
+function describeError(err) {
+  if (err === null || err === undefined) return 'unknown failure (nothing thrown)';
+  if (typeof err === 'string') return err;
+  const name = err.name || err.constructor?.name || '';
+  const message = err.message || err.toString?.() || '';
+  if (name || message) return [name, message].filter(Boolean).join(': ');
   try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+let lastDevice = null;
+
+async function connect(options) {
+  // Report the step we are ABOUT to attempt, so a failure names the step.
+  let step = 'starting';
+  try {
+    step = 'requesting device';
     status('Requesting device…');
     const device = await navigator.bluetooth.requestDevice({
       ...options,
       optionalServices: [SERVICE],
     });
+    lastDevice = device;
 
     device.addEventListener('gattserverdisconnected', () => {
       tx = null;
       $('send').disabled = true;
+      $('disconnect').hidden = true;
       status('Disconnected');
     });
 
-    status('Connecting…');
+    step = 'connecting to GATT server';
+    status('Connecting to GATT…');
     const server = await device.gatt.connect();
+
+    step = 'finding serial service';
+    status('Finding serial service…');
     const service = await server.getPrimaryService(SERVICE);
+
+    step = 'getting TX characteristic';
+    status('Getting TX…');
     tx = await service.getCharacteristic(TX_CHAR);
 
+    step = 'getting RX characteristic';
+    status('Getting RX…');
     const rx = await service.getCharacteristic(RX_CHAR);
+
+    step = 'subscribing to notifications';
+    status('Subscribing…');
     await rx.startNotifications();
     rx.addEventListener('characteristicvaluechanged', (e) => {
       const reply = new TextDecoder().decode(e.target.value).trim();
@@ -74,17 +109,25 @@ async function connect(options) {
 
     // Deliberately NOT sending start_rpc_session — we want the CLI shell.
     $('send').disabled = false;
+    $('disconnect').hidden = false;
     status(`Connected to ${device.name || 'Flipper'}`);
   } catch (err) {
-    if (err.name === 'NotFoundError') {
-      status('No device picked. Bluetooth on? Try "Show all devices".');
-    } else if (err.name === 'SecurityError') {
-      status(`Service blocked: ${err.message}`);
-    } else {
-      status(`${err.name}: ${err.message}`);
-    }
+    tx = null;
+    $('send').disabled = true;
+    status(`Failed while ${step} — ${describeError(err)}`);
   }
 }
+
+// iOS caches GATT state; an explicit disconnect makes retrying reliable.
+$('disconnect').onclick = () => {
+  try {
+    if (lastDevice?.gatt?.connected) lastDevice.gatt.disconnect();
+  } catch { /* nothing useful to do */ }
+  tx = null;
+  $('send').disabled = true;
+  $('disconnect').hidden = true;
+  status('Disconnected — tap Connect to retry');
+};
 
 $('connect').onclick = () => connect({ filters: [{ namePrefix: 'Flipper' }] });
 $('connect-any').onclick = () => connect({ acceptAllDevices: true });
@@ -103,7 +146,7 @@ $('send').onclick = async () => {
     }
     $('text').value = '';
   } catch (err) {
-    status(`Error: ${err.message}`);
+    status(`Send failed — ${describeError(err)}`);
   } finally {
     $('send').disabled = false;
   }
@@ -114,6 +157,11 @@ if (!navigator.bluetooth) {
   $('connect').disabled = true;
   $('connect-any').disabled = true;
 }
+
+// Surface anything that escapes the handlers above rather than failing silently.
+window.addEventListener('unhandledrejection', (e) => {
+  status(`Unhandled: ${describeError(e.reason)}`);
+});
 </script>
 </body>
 </html>

@@ -32,8 +32,15 @@ static void km_draw_callback(Canvas* canvas, void* ctx) {
         canvas_draw_str(canvas, 2, 28, line);
         canvas_draw_str(canvas, 2, 40, "OK = type   Back = cancel");
     } else {
-        canvas_draw_str(
-            canvas, 2, 28, furi_hal_hid_is_connected() ? "USB: ready" : "USB: no host");
+        const char* usb_state;
+        if(!app->usb_claimed) {
+            usb_state = "USB: claim FAILED";
+        } else if(furi_hal_hid_is_connected()) {
+            usb_state = "USB: ready";
+        } else {
+            usb_state = "USB: no host";
+        }
+        canvas_draw_str(canvas, 2, 28, usb_state);
 
         const char* name = app->layout_path[0] ? strrchr(app->layout_path, '/') : NULL;
         char line[32];
@@ -88,9 +95,14 @@ int32_t km_bridge_app(void* p) {
         }
     }
 
-    /* Take over USB as an HID keyboard, remembering what to put back. */
+    /* Take over USB as an HID keyboard, remembering what to put back.
+     * The switch is refused while another session holds a USB mode lock, so
+     * unlock first and record whether the claim actually succeeded. */
     app->usb_prev = furi_hal_usb_get_config();
-    furi_hal_usb_set_config(&usb_hid, NULL);
+    if(furi_hal_usb_is_locked()) {
+        furi_hal_usb_unlock();
+    }
+    app->usb_claimed = furi_hal_usb_set_config(&usb_hid, NULL);
 
     km_cli_register(app);
 
