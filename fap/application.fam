@@ -1,0 +1,9 @@
+App(
+    appid="km_bridge",
+    name="KM Bridge",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="km_bridge_app",
+    stack_size=4 * 1024,
+    fap_category="Tools",
+    fap_description="Type text sent from a phone over BLE as USB HID keystrokes",
+)

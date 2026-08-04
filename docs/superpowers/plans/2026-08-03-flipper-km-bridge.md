@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Target firmware:** official/stock. SDK API version **88.2**. All symbols used are confirmed present in `targets/f7/api_symbols.csv`.
+- **Target firmware:** official/stock. Verified against **ufbt release channel, firmware 1.4.3, API version 87.1**. (The plan was originally drafted against `dev`, which numbers its API 88.2; every symbol below was re-checked against 87.1 and all signatures are identical.) All symbols used are confirmed present in `targets/f7/api_symbols.csv`.
 - **The payload must never be passed to `FURI_LOG_*`.** Flipper logs are emitted over the serial console in plaintext. This applies to every task.
 - **The payload must never be written to the SD card.**
 - **Payload cap: 1024 bytes of decoded text** (base64 line may reach ~1368 bytes).

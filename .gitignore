@@ -1,0 +1,6 @@
+build/
+tests/build/
+.ufbt/
+dist/
+*.fap
+.vscode/
