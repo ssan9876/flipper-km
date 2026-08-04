@@ -27,12 +27,22 @@ static void km_type_buffer(const KmLayout* layout, const uint8_t* text, size_t l
 static void km_cli_kmtype(PipeSide* pipe, FuriString* args, void* context) {
     KmApp* app = context;
 
+    if(!furi_hal_hid_is_connected()) {
+        km_reply(pipe, "ERR nohost\r\n");
+        return;
+    }
+
     uint8_t payload[KM_PAYLOAD_MAX];
     size_t payload_len = 0;
 
     furi_string_trim(args);
     const char* b64 = furi_string_get_cstr(args);
     size_t b64_len = furi_string_size(args);
+
+    if(b64_len == 0) {
+        km_reply(pipe, "ERR badb64\r\n");
+        return;
+    }
 
     KmB64Result decoded = km_base64_decode(b64, b64_len, payload, sizeof(payload), &payload_len);
 
@@ -43,6 +53,20 @@ static void km_cli_kmtype(PipeSide* pipe, FuriString* args, void* context) {
     if(decoded != KmB64Ok) {
         km_reply(pipe, "ERR badb64\r\n");
         goto cleanup;
+    }
+
+    /* Braces are load-bearing: the goto statements above jump forward past
+     * this point, and jumping over an initialised declaration at function
+     * scope draws a warning under some GCC configurations. */
+    {
+        int bad_index = km_layout_first_unmappable(&app->layout, payload, payload_len);
+        if(bad_index >= 0) {
+            /* Index only -- never the offending character. */
+            char msg[32];
+            snprintf(msg, sizeof(msg), "ERR unmappable@%d\r\n", bad_index);
+            km_reply(pipe, msg);
+            goto cleanup;
+        }
     }
 
     furi_mutex_acquire(app->state_mutex, FuriWaitForever);
