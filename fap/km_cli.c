@@ -45,8 +45,32 @@ static void km_cli_kmtype(PipeSide* pipe, FuriString* args, void* context) {
         goto cleanup;
     }
 
-    km_type_buffer(&app->layout, payload, payload_len);
-    km_reply(pipe, "OK\r\n");
+    furi_mutex_acquire(app->state_mutex, FuriWaitForever);
+    app->pending_len = payload_len;
+    app->awaiting_confirm = true;
+    furi_mutex_release(app->state_mutex);
+
+    furi_event_flag_clear(app->confirm_flags, KM_FLAG_CONFIRM | KM_FLAG_CANCEL);
+
+    uint32_t flags = furi_event_flag_wait(
+        app->confirm_flags,
+        KM_FLAG_CONFIRM | KM_FLAG_CANCEL,
+        FuriFlagWaitAny,
+        KM_CONFIRM_TIMEOUT_MS);
+
+    furi_mutex_acquire(app->state_mutex, FuriWaitForever);
+    app->awaiting_confirm = false;
+    app->pending_len = 0;
+    furi_mutex_release(app->state_mutex);
+
+    if(flags & KM_FLAG_CONFIRM) {
+        km_type_buffer(&app->layout, payload, payload_len);
+        km_reply(pipe, "OK\r\n");
+    } else if(flags & KM_FLAG_CANCEL) {
+        km_reply(pipe, "ERR cancelled\r\n");
+    } else {
+        km_reply(pipe, "ERR timeout\r\n");
+    }
 
 cleanup:
     memset(payload, 0, sizeof(payload));

@@ -10,13 +10,29 @@
 #include "km_cli.h"
 
 static void km_draw_callback(Canvas* canvas, void* ctx) {
-    UNUSED(ctx);
+    KmApp* app = ctx;
+
+    furi_mutex_acquire(app->state_mutex, FuriWaitForever);
+    bool awaiting = app->awaiting_confirm;
+    size_t len = app->pending_len;
+    furi_mutex_release(app->state_mutex);
+
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 2, 12, "KM Bridge");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 28, furi_hal_hid_is_connected() ? "USB: ready" : "USB: no host");
-    canvas_draw_str(canvas, 2, 40, "Waiting for phone");
+
+    if(awaiting) {
+        /* Character count only -- never the payload itself. */
+        char line[32];
+        snprintf(line, sizeof(line), "Type %u chars?", (unsigned)len);
+        canvas_draw_str(canvas, 2, 28, line);
+        canvas_draw_str(canvas, 2, 40, "OK = type   Back = cancel");
+    } else {
+        canvas_draw_str(
+            canvas, 2, 28, furi_hal_hid_is_connected() ? "USB: ready" : "USB: no host");
+        canvas_draw_str(canvas, 2, 40, "Waiting for phone");
+    }
 }
 
 static void km_input_callback(InputEvent* event, void* ctx) {
@@ -30,6 +46,10 @@ int32_t km_bridge_app(void* p) {
     KmApp* app = malloc(sizeof(KmApp));
     app->running = true;
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    app->confirm_flags = furi_event_flag_alloc();
+    app->state_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    app->awaiting_confirm = false;
+    app->pending_len = 0;
 
     km_layout_set_default(&app->layout, hid_asciimap, sizeof(hid_asciimap) / sizeof(uint16_t));
 
@@ -48,8 +68,20 @@ int32_t km_bridge_app(void* p) {
     InputEvent event;
     while(app->running) {
         if(furi_message_queue_get(app->input_queue, &event, 100) == FuriStatusOk) {
-            if(event.type == InputTypeShort && event.key == InputKeyBack) {
-                app->running = false;
+            if(event.type == InputTypeShort) {
+                furi_mutex_acquire(app->state_mutex, FuriWaitForever);
+                bool awaiting = app->awaiting_confirm;
+                furi_mutex_release(app->state_mutex);
+
+                if(awaiting) {
+                    if(event.key == InputKeyOk) {
+                        furi_event_flag_set(app->confirm_flags, KM_FLAG_CONFIRM);
+                    } else if(event.key == InputKeyBack) {
+                        furi_event_flag_set(app->confirm_flags, KM_FLAG_CANCEL);
+                    }
+                } else if(event.key == InputKeyBack) {
+                    app->running = false;
+                }
             }
         }
         view_port_update(app->view_port);
@@ -63,6 +95,8 @@ int32_t km_bridge_app(void* p) {
     furi_record_close(RECORD_GUI);
     view_port_free(app->view_port);
     furi_message_queue_free(app->input_queue);
+    furi_event_flag_free(app->confirm_flags);
+    furi_mutex_free(app->state_mutex);
 
     furi_hal_usb_set_config(app->usb_prev, NULL);
 
