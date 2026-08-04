@@ -14,12 +14,15 @@
   button { font-size: 1.1rem; padding: .9rem; border-radius: .5rem; border: 0; }
   #connect { background: #2d6cdf; color: #fff; }
   #send { background: #1a8a3a; color: #fff; }
+  .secondary { background: transparent; color: #2d6cdf; font-size: .9rem;
+               padding: .4rem; text-decoration: underline; }
   button:disabled { opacity: .45; }
   #status { font-size: .9rem; opacity: .8; min-height: 1.4em; }
 </style>
 </head>
 <body>
   <button id="connect">Connect to Flipper</button>
+  <button id="connect-any" class="secondary">Can't see it? Show all devices</button>
   <textarea id="text" placeholder="Paste here" autocomplete="off"
             autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
   <button id="send" disabled>Send</button>
@@ -38,18 +41,26 @@ const status = (msg) => { $('status').textContent = msg; };
 
 let tx = null;
 
-$('connect').onclick = async () => {
+// The Flipper does not advertise its serial service UUID, so filtering on
+// services finds nothing. Filter by name instead, and keep a show-everything
+// fallback for Flippers renamed to something other than "Flipper …".
+// optionalServices is mandatory in both cases: without it, getPrimaryService
+// throws a SecurityError even after a successful connect.
+async function connect(options) {
   try {
     status('Requesting device…');
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE] }],
+      ...options,
+      optionalServices: [SERVICE],
     });
+
     device.addEventListener('gattserverdisconnected', () => {
       tx = null;
       $('send').disabled = true;
       status('Disconnected');
     });
 
+    status('Connecting…');
     const server = await device.gatt.connect();
     const service = await server.getPrimaryService(SERVICE);
     tx = await service.getCharacteristic(TX_CHAR);
@@ -65,9 +76,18 @@ $('connect').onclick = async () => {
     $('send').disabled = false;
     status(`Connected to ${device.name || 'Flipper'}`);
   } catch (err) {
-    status(`Error: ${err.message}`);
+    if (err.name === 'NotFoundError') {
+      status('No device picked. Bluetooth on? Try "Show all devices".');
+    } else if (err.name === 'SecurityError') {
+      status(`Service blocked: ${err.message}`);
+    } else {
+      status(`${err.name}: ${err.message}`);
+    }
   }
-};
+}
+
+$('connect').onclick = () => connect({ filters: [{ namePrefix: 'Flipper' }] });
+$('connect-any').onclick = () => connect({ acceptAllDevices: true });
 
 $('send').onclick = async () => {
   if (!tx) return;
@@ -92,6 +112,7 @@ $('send').onclick = async () => {
 if (!navigator.bluetooth) {
   status('Web Bluetooth unavailable — use Bluefy on iOS or Chrome on Android');
   $('connect').disabled = true;
+  $('connect-any').disabled = true;
 }
 </script>
 </body>
