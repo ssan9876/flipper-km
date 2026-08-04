@@ -62,10 +62,12 @@ there, as LLVM's Windows build targets MSVC and needs a separate Windows SDK.
 
 ## Phone setup
 
-**iOS:** Safari has no Web Bluetooth. Install [Bluefy](https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055)
-(free), open the page in it, and add it to your home screen.
+**The page is live at https://ssan9876.github.io/flipper-km/web/**
 
-**Android:** Chrome supports Web Bluetooth directly.
+**iOS:** Safari has no Web Bluetooth. Install [Bluefy](https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055)
+(free), open the page in it, then Share → Add to Home Screen.
+
+**Android:** Chrome supports Web Bluetooth directly — open the same URL.
 
 Pairing shows a six-digit passkey on the Flipper's screen. Note the Flipper bonds
 with **one phone at a time** — pairing a second displaces the first.

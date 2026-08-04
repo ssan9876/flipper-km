@@ -1569,11 +1569,21 @@ git commit -m "feat: add Web Bluetooth page for sending text to the Flipper"
 Create a GitHub repository, push, then enable Pages:
 
 ```bash
-gh repo create flipper-km --private --source=. --push
-gh api -X POST repos/:owner/flipper-km/pages -f "source[branch]=main" -f "source[path]=/" 2>/dev/null || true
+gh repo create flipper-km --source=. --push
+gh api -X POST repos/:owner/flipper-km/pages -f "source[branch]=main" -f "source[path]=/"
 ```
 
-Enable Pages in repository Settings → Pages if the API call did not take, serving from the branch root. The page will be at `https://<user>.github.io/flipper-km/web/`.
+**The repository must be public** unless the account has a paid plan — Pages on a private repo returns HTTP 422 "Your current plan does not support GitHub Pages for this repository." The plan originally said `--private`; that combination does not work on a free account. If the repo must stay private, host the page on Cloudflare Pages or Netlify instead, both of which deploy from a private repo on their free tiers.
+
+Note this publishes `docs/` as well as the code. Check the spec's problem statement for personal detail before making a repo public.
+
+Pages builds asynchronously; poll `gh api repos/:owner/flipper-km/pages/builds/latest --jq .status` until it reports `built`.
+
+The page will be at `https://<user>.github.io/flipper-km/web/`. Verify `framing.js` is served with a JavaScript content-type — a wrong MIME type breaks the ES module import silently:
+
+```bash
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n" https://<user>.github.io/flipper-km/web/framing.js
+```
 
 Web Bluetooth requires HTTPS; GitHub Pages provides it.
 
