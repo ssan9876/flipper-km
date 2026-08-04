@@ -115,19 +115,21 @@ git commit -m "docs: record BLE reachability spike result"
 - Consumes: nothing
 - Produces: `KmB64Result km_base64_decode(const char* in, size_t in_len, uint8_t* out, size_t out_cap, size_t* out_len)` and `typedef enum { KmB64Ok = 0, KmB64BadChar, KmB64BadLength, KmB64TooLong } KmB64Result`
 
-- [ ] **Step 1: Install clang**
+- [ ] **Step 1: Install a C compiler**
 
 ```bash
-winget install --id LLVM.LLVM -e --accept-package-agreements --accept-source-agreements
+winget install --id zig.zig -e --accept-package-agreements --accept-source-agreements
 ```
 
-Open a new shell afterward so `PATH` is refreshed. Verify:
+Open a new shell afterward so `PATH` is refreshed, then verify:
 
 ```bash
-clang --version
+zig version
 ```
 
-If `clang` is still not found, add `C:\Program Files\LLVM\bin` to `PATH`.
+**Do not use plain `clang` on Windows.** It was tried first and does not work standalone: LLVM's Windows build targets MSVC and resolves neither `stdio.h` nor the C runtime without a separate Windows SDK / MSVC Build Tools installation (several GB). `zig cc` is a clang frontend that ships its own libc headers, so it needs nothing else.
+
+`tests/run.sh` auto-detects a compiler — it prefers `zig`, falls back to the winget install path when `zig` is not yet on `PATH`, then tries `cc`/`gcc`/`clang`. Override with `KM_CC` if you want a specific one.
 
 - [ ] **Step 2: Create the test harness**
 
