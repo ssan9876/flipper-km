@@ -218,9 +218,10 @@ before any code depends on the assumption.
 
 ```
 D:\flipper-km\
-  fap/     application.fam, km_bridge.c, cli_command.c, layout.c, base64.c, ui.c
-  tests/   host-compiled tests for the pure core
-  web/     index.html
+  fap/     application.fam, km_bridge.c, km_bridge_i.h, km_cli.c,
+           km_layout.c, km_layout_file.c, km_base64.c
+  tests/   host-compiled tests for the pure core (clang)
+  web/     index.html, framing.js
   docs/superpowers/specs/
 ```
 
