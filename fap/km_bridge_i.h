@@ -38,6 +38,11 @@ typedef struct {
     Bt* bt;
     FuriHalBleProfileBase* ble_profile;
     bool ble_ready;
+    /* The bt service reinstalls its own callback and re-enables RPC on every
+     * connection, silently undoing our takeover. Set when a connection is
+     * observed so the main thread can re-claim the link. */
+    volatile bool ble_reclaim_needed;
+    volatile bool ble_connected;
 
     /* Single-producer (BLE thread) / single-consumer (main thread) handoff.
      * The producer only writes ready_line while line_ready is false; the

@@ -63,9 +63,31 @@ static uint16_t km_ble_event_callback(SerialServiceEvent event, void* context) {
     return (uint16_t)(KM_LINE_MAX - app->line_len);
 }
 
+void km_ble_reclaim(KmApp* app) {
+    if(app->ble_profile == NULL) return;
+    /* Order matters: stop RPC consuming the stream, then claim it. */
+    ble_profile_serial_set_rpc_active(app->ble_profile, false);
+    ble_profile_serial_set_event_callback(
+        app->ble_profile, KM_LINE_MAX, km_ble_event_callback, app);
+}
+
+/* Called from the bt service thread. Only sets flags -- the actual re-claim
+ * happens on the main thread. */
+static void km_ble_status_callback(BtStatus status, void* context) {
+    KmApp* app = context;
+    if(status == BtStatusConnected) {
+        app->ble_connected = true;
+        app->ble_reclaim_needed = true;
+    } else {
+        app->ble_connected = false;
+    }
+}
+
 bool km_ble_start(KmApp* app) {
     app->bt = furi_record_open(RECORD_BT);
 
+    /* NOTE: this restarts the BLE core, dropping any active connection. It
+     * also blocks until the bt thread completes the switch. */
     app->ble_profile = bt_profile_start(app->bt, ble_profile_serial, NULL);
     if(app->ble_profile == NULL) {
         furi_record_close(RECORD_BT);
@@ -73,10 +95,8 @@ bool km_ble_start(KmApp* app) {
         return false;
     }
 
-    /* Order matters: stop RPC consuming the stream, then claim it. */
-    ble_profile_serial_set_rpc_active(app->ble_profile, false);
-    ble_profile_serial_set_event_callback(
-        app->ble_profile, KM_LINE_MAX, km_ble_event_callback, app);
+    km_ble_reclaim(app);
+    bt_set_status_changed_callback(app->bt, km_ble_status_callback, app);
 
     /* bt_profile_start already brings up advertising; calling
      * furi_hal_bt_start_advertising() again here is redundant and risks
@@ -85,6 +105,10 @@ bool km_ble_start(KmApp* app) {
 }
 
 void km_ble_stop(KmApp* app) {
+    if(app->bt != NULL) {
+        /* Detach the status callback first, or it fires into freed memory. */
+        bt_set_status_changed_callback(app->bt, NULL, NULL);
+    }
     if(app->ble_profile != NULL) {
         /* Detach before the app's memory goes away, or the stack calls into
          * a freed context. */

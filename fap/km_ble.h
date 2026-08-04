@@ -11,3 +11,8 @@ void km_ble_stop(KmApp* app);
 
 /** Send a reply line back to the phone. Safe to call from the main thread. */
 void km_ble_reply(KmApp* app, const char* msg);
+
+/** Re-assert our callback over the link. Must be called from the main thread
+ *  after every new connection, because the bt service reclaims the link each
+ *  time a phone connects. */
+void km_ble_reclaim(KmApp* app);

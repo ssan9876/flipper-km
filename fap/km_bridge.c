@@ -44,7 +44,15 @@ static void km_draw_callback(Canvas* canvas, void* ctx) {
             usb_state = "USB: no host";
         }
         canvas_draw_str(canvas, 2, 26, usb_state);
-        canvas_draw_str(canvas, 2, 38, app->ble_ready ? "BLE: waiting" : "BLE: FAILED");
+        const char* ble_state;
+        if(!app->ble_ready) {
+            ble_state = "BLE: FAILED";
+        } else if(app->ble_connected) {
+            ble_state = "BLE: phone connected";
+        } else {
+            ble_state = "BLE: waiting";
+        }
+        canvas_draw_str(canvas, 2, 38, ble_state);
 
         const char* name = app->layout_path[0] ? strrchr(app->layout_path, '/') : NULL;
         char line[32];
@@ -203,6 +211,13 @@ int32_t km_bridge_app(void* p) {
     InputEvent event;
 
     while(app->running) {
+        /* The bt service reclaims the serial link on every connection, so take
+         * it back each time a phone connects. */
+        if(app->ble_reclaim_needed) {
+            app->ble_reclaim_needed = false;
+            km_ble_reclaim(app);
+        }
+
         if(app->line_ready) {
             km_handle_line(app, app->ready_line);
             memset(app->ready_line, 0, sizeof(app->ready_line));
