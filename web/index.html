@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>KM Bridge</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.4 system-ui, sans-serif; margin: 0; padding: 1rem;
+         display: flex; flex-direction: column; gap: .75rem; min-height: 100vh; }
+  textarea { width: 100%; min-height: 8rem; font: 16px ui-monospace, monospace;
+             padding: .5rem; box-sizing: border-box; }
+  button { font-size: 1.1rem; padding: .9rem; border-radius: .5rem; border: 0; }
+  #connect { background: #2d6cdf; color: #fff; }
+  #send { background: #1a8a3a; color: #fff; }
+  button:disabled { opacity: .45; }
+  #status { font-size: .9rem; opacity: .8; min-height: 1.4em; }
+</style>
+</head>
+<body>
+  <button id="connect">Connect to Flipper</button>
+  <textarea id="text" placeholder="Paste here" autocomplete="off"
+            autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+  <button id="send" disabled>Send</button>
+  <div id="status">Not connected</div>
+
+<script type="module">
+import { buildCommand, chunk } from './framing.js';
+
+const SERVICE = '8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000';
+const TX_CHAR = '19ed82ae-ed21-4c9d-4145-228e62fe0000';
+const RX_CHAR = '19ed82ae-ed21-4c9d-4145-228e61fe0000';
+const CHUNK = 20; // safe under the default 23-byte ATT MTU
+
+const $ = (id) => document.getElementById(id);
+const status = (msg) => { $('status').textContent = msg; };
+
+let tx = null;
+
+$('connect').onclick = async () => {
+  try {
+    status('Requesting device…');
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE] }],
+    });
+    device.addEventListener('gattserverdisconnected', () => {
+      tx = null;
+      $('send').disabled = true;
+      status('Disconnected');
+    });
+
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    tx = await service.getCharacteristic(TX_CHAR);
+
+    const rx = await service.getCharacteristic(RX_CHAR);
+    await rx.startNotifications();
+    rx.addEventListener('characteristicvaluechanged', (e) => {
+      const reply = new TextDecoder().decode(e.target.value).trim();
+      if (reply) status(reply);
+    });
+
+    // Deliberately NOT sending start_rpc_session — we want the CLI shell.
+    $('send').disabled = false;
+    status(`Connected to ${device.name || 'Flipper'}`);
+  } catch (err) {
+    status(`Error: ${err.message}`);
+  }
+};
+
+$('send').onclick = async () => {
+  if (!tx) return;
+  const text = $('text').value;
+  if (!text) { status('Nothing to send'); return; }
+
+  try {
+    $('send').disabled = true;
+    status('Sending — press OK on the Flipper');
+    const bytes = new TextEncoder().encode(buildCommand(text));
+    for (const part of chunk(bytes, CHUNK)) {
+      await tx.writeValue(part);
+    }
+    $('text').value = '';
+  } catch (err) {
+    status(`Error: ${err.message}`);
+  } finally {
+    $('send').disabled = false;
+  }
+};
+
+if (!navigator.bluetooth) {
+  status('Web Bluetooth unavailable — use Bluefy on iOS or Chrome on Android');
+  $('connect').disabled = true;
+}
+</script>
+</body>
+</html>

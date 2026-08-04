@@ -1403,7 +1403,7 @@ test('chunk returns nothing for empty input', () => {
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-node --test web/
+node --test "web/*.test.mjs"
 ```
 
 Expected: FAIL — cannot find module `./framing.js`.
@@ -1436,7 +1436,7 @@ export function chunk(bytes, size) {
 - [ ] **Step 4: Run to verify it passes**
 
 ```bash
-node --test web/
+node --test "web/*.test.mjs"
 ```
 
 Expected: 6 tests pass.
@@ -1624,7 +1624,7 @@ Work through every item. Record any failures as issues before declaring the proj
 
 - [ ] **Step 5: Write the README**
 
-Create `README.md` covering: what the project does, the two components, how to build (`ufbt`), how to run tests (`bash tests/run.sh` and `node --test web/`), how to pair the phone, and the security properties from the spec (nothing at rest, confirm-to-type, ASCII only).
+Create `README.md` covering: what the project does, the two components, how to build (`ufbt`), how to run tests (`bash tests/run.sh` and `node --test "web/*.test.mjs"`), how to pair the phone, and the security properties from the spec (nothing at rest, confirm-to-type, ASCII only).
 
 - [ ] **Step 6: Commit**
 
