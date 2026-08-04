@@ -51,24 +51,58 @@ A single self-contained HTML file served over HTTPS from GitHub Pages (Web
 Bluetooth requires a secure context). Contains a textarea, a Send button, and a
 connection indicator. Intended to be added to the phone's home screen.
 
-## Key technical decision: the CLI, not the raw serial callback
+## Key technical decision: take over the BLE serial link
 
-The Flipper's BLE serial service is, by default, wired to the Flipper's CLI
-shell. The known-working Web Bluetooth proof of concept
-(`EstebanFuentealba/flipper-zero-bluetooth-serial-poc`) demonstrates this: it
-writes the literal string `start_rpc_session\r` to the TX characteristic to
-switch the link out of shell mode and into protobuf RPC mode. If a client never
-sends that, it is talking to a shell.
+> **Corrected 2026-08-04 after implementation.** The original decision recorded
+> here was wrong, and the correction is kept visible because the reasoning error
+> matters more than the conclusion.
+>
+> The original text claimed the Flipper's BLE serial link is a CLI shell that an
+> app can register commands on, inferred from a proof of concept writing
+> `start_rpc_session` to the TX characteristic — read as "opt into RPC." That is
+> a *USB* CLI idiom. It was generalised to BLE without checking the firmware,
+> and it was the single assumption every other part of the design depended on.
 
-This design uses that shell.
+The Flipper's BLE serial link is **not** a CLI shell. `bt.c`'s
+`GapEventTypeConnected` handler opens a protobuf RPC session the moment a phone
+connects and routes every incoming byte into `rpc_session_feed()`. A plain-text
+command written to it reaches a protobuf parser, which discards it without any
+error. The bytes arrive; nothing is listening for text.
 
-The considered alternative — taking over the raw serial callback with
-`furi_hal_bt_serial_set_event_callback`, as `maybe-hello-world/fbs` does — was
-rejected. That repository carries a warning that it may no longer work against
-current firmware due to API changes, and a Flipper forum thread documents someone
-stuck at exactly that point: the firmware logs `Received 14 bytes` while the
-application callback never fires for raw GATT writes. Registering a CLI command
-is a documented, supported extension point and avoids that failure mode entirely.
+The design therefore takes over the link, which requires two calls in order:
+
+```c
+ble_profile_serial_set_rpc_active(profile, false);
+ble_profile_serial_set_event_callback(profile, buf_size, callback, context);
+```
+
+This is the approach the original spec rejected as fragile, citing the `fbs`
+repository's stale-API warning and a forum thread where the callback never
+fired. Reading the firmware explains that failure: those reports install the
+callback but never disable RPC routing, so the bt service keeps consuming the
+stream first. One missing call, not an unstable API.
+
+**The claim must be renewed on every connection.** `bt.c` reinstalls its own
+callback and re-enables RPC each time a phone connects, silently undoing the
+takeover. The app registers `bt_set_status_changed_callback` and re-claims from
+the main thread whenever a connection is observed.
+
+### Constraints on the serial callback
+
+Per `serial_service.c`, the callback is invoked inside the BLE core event
+handler, on the BLE stack's own thread, while that handler holds `buff_size_mtx`.
+It must not block, must return promptly, and must not place large objects on its
+stack — that thread's stack is sized for the BLE stack's own use. A 1.4 KB local
+there overflowed it inside the locked region and hung the device hard enough to
+require a physical reset. All buffers live in the heap-allocated app struct, and
+handoff to the main thread is a single-producer/single-consumer publish flag.
+
+### Consequence: USB CLI testing is impossible
+
+`usb_cdc_single` (the serial CLI) and `usb_hid` (the keyboard) are mutually
+exclusive USB device modes. The app claims HID at startup, so the USB serial CLI
+disappears while it runs. Any verification step of the form "run `kmtype …` over
+the USB CLI with the app open" cannot work. All command testing goes over BLE.
 
 ### BLE identifiers
 

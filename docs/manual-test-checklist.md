@@ -6,8 +6,13 @@ Base64 vectors below are pre-verified, so a mismatch means a real defect
 rather than a bad test value.
 
 ## Setup
-- [ ] Flipper connected to the PC by USB, Bluetooth on, KM Bridge app open
-- [ ] Phone paired, page open, "Connected" shown
+
+Order matters: the app restarts the BLE core when it launches, dropping any
+existing connection.
+
+- [ ] Flipper connected to the PC by USB, Bluetooth on
+- [ ] **Open KM Bridge on the Flipper first**
+- [ ] *Then* connect from the phone; Flipper shows `BLE: phone connected`
 
 ## Happy path
 - [ ] Paste `hello world`, tap Send, press OK on the Flipper → typed correctly, page shows `OK`
@@ -18,23 +23,32 @@ rather than a bad test value.
 - [ ] Send, then press Back on the Flipper → nothing typed, page shows `ERR cancelled`
 - [ ] Send, wait 60 s → nothing typed, page shows `ERR timeout`
 - [ ] Send, then exit the app before confirming → nothing typed, no crash
-- [ ] Exit the app, then invoke `kmtype` over the USB CLI → unknown command, **no crash**
-      (this is the dangling-CLI-command bug the teardown ordering prevents)
+- [ ] Exit the app → USB returns to serial (a COM port reappears on the PC)
 - [ ] Disconnect the phone mid-prompt → Flipper does not crash, buffer discarded at timeout
+- [ ] Reconnect the phone after a disconnect → `BLE: phone connected` again, and a send
+      still works. This exercises the per-connection re-claim; without it the firmware
+      silently takes the link back and nothing arrives.
 
 ## Error paths
-Run these over the USB CLI with the app open:
 
-| Input | Expected reply |
+**There is no USB CLI while the app is running.** `usb_cdc_single` and `usb_hid`
+are mutually exclusive USB modes, and the app claims HID at startup. Everything
+below goes over BLE from the phone.
+
+Reachable through the page's normal textarea:
+
+| What you paste | Expected reply on the phone |
 |---|---|
-| `kmtype` (no argument) | `ERR badb64` |
-| `kmtype QQ=` | `ERR badb64` |
-| `kmtype w6k=` (UTF-8 `é`) | `ERR unmappable@0` |
-| `kmtype YcOp` (`a` then `é`) | `ERR unmappable@1` |
-| base64 over 1368 chars | `ERR toolong` |
+| Text containing an emoji or accented character | `ERR unmappable@<n>`, nothing typed |
+| More than 1024 characters | `ERR toolong`, nothing typed |
+| Anything, with USB unplugged | `ERR nohost` |
+| A second send while a prompt is already pending | `ERR busy` |
 
-- [ ] All five rows produce the expected reply and type nothing
-- [ ] Unplug USB data, send over BLE → `ERR nohost`
+- [ ] All four rows produce the expected reply and type nothing
+
+`ERR badb64` and `ERR badcmd` are not reachable from the page, which only ever
+emits well-formed `kmtype <valid base64>`. They guard against corruption on the
+wire rather than user input, and are covered by the host-side base64 tests.
 
 ## Layout
 - [ ] Select a non-US `.kl` layout, confirm it persists across an app restart
