@@ -17,17 +17,21 @@
   .secondary { background: transparent; color: #2d6cdf; font-size: .9rem;
                padding: .4rem; text-decoration: underline; }
   button:disabled { opacity: .45; }
-  #status { font-size: .9rem; opacity: .8; min-height: 1.4em; }
+  #send { font-size: 1.25rem; padding: 1.1rem; }
+  #status { font-size: .9rem; opacity: .8; min-height: 1.4em; text-align: center; }
+  .spacer { flex: 1; }
 </style>
 </head>
 <body>
+  <textarea id="text" placeholder="Paste your password here" autocomplete="off"
+            autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+  <button id="paste" class="secondary" hidden>Paste from clipboard</button>
+  <button id="send">Send</button>
+  <div id="status">Connecting…</div>
+  <div class="spacer"></div>
   <button id="connect">Connect to Flipper</button>
   <button id="connect-any" class="secondary">Can't see it? Show all devices</button>
   <button id="disconnect" class="secondary" hidden>Disconnect</button>
-  <textarea id="text" placeholder="Paste here" autocomplete="off"
-            autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-  <button id="send" disabled>Send</button>
-  <div id="status">Not connected</div>
 
 <script type="module">
 import { buildCommand, chunk } from './framing.js';
@@ -98,24 +102,25 @@ async function connectWithRetry(device) {
 
 let lastDevice = null;
 
-async function connect(options) {
-  // Report the step we are ABOUT to attempt, so a failure names the step.
+// Wire up a device: attach the disconnect handler once, then open the link.
+// Used by both the manual picker path and silent auto-reconnect.
+async function attach(device) {
   let step = 'starting';
   try {
-    step = 'requesting device';
-    status('Requesting device…');
-    const device = await navigator.bluetooth.requestDevice({
-      ...options,
-      optionalServices: [SERVICE],
-    });
     lastDevice = device;
 
-    device.addEventListener('gattserverdisconnected', () => {
-      tx = null;
-      $('send').disabled = true;
-      $('disconnect').hidden = true;
-      status('Disconnected');
-    });
+    if (!device._kmHandlerAttached) {
+      device._kmHandlerAttached = true;
+      device.addEventListener('gattserverdisconnected', () => {
+        tx = null;
+        $('send').disabled = true;
+        $('disconnect').hidden = true;
+        status('Disconnected — reconnecting…');
+        // The Flipper app restarts the BLE core when it launches, so drops are
+        // expected rather than exceptional. Climb back on our own.
+        scheduleReconnect();
+      });
+    }
 
     step = 'connecting to GATT server';
     status('Connecting to GATT…');
@@ -141,35 +146,105 @@ async function connect(options) {
       if (reply) status(reply);
     });
 
-    // Deliberately NOT sending start_rpc_session — we want the CLI shell.
+    // Deliberately NOT sending start_rpc_session — that would hand the link
+    // back to the firmware's protobuf RPC parser.
+    reconnectAttempts = 0;
     $('send').disabled = false;
     $('disconnect').hidden = false;
+    $('connect').hidden = true;
+    $('connect-any').hidden = true;
     status(`Connected to ${device.name || 'Flipper'}`);
+    return true;
   } catch (err) {
     tx = null;
     $('send').disabled = true;
     status(`Failed while ${step} — ${describeError(err)}`);
+    return false;
   }
 }
 
-// iOS caches GATT state; an explicit disconnect makes retrying reliable.
+// Manual path: show the picker, then attach.
+async function connect(options) {
+  try {
+    status('Requesting device…');
+    const device = await navigator.bluetooth.requestDevice({
+      ...options,
+      optionalServices: [SERVICE],
+    });
+    return await attach(device);
+  } catch (err) {
+    status(`Failed while requesting device — ${describeError(err)}`);
+    return false;
+  }
+}
+
+// Silent path: Bluefy and Chrome expose already-permitted devices through
+// getDevices(), so a returning user never sees the picker again.
+async function autoConnect(quiet) {
+  if (!navigator.bluetooth?.getDevices) return false;
+  try {
+    const devices = await navigator.bluetooth.getDevices();
+    const device = devices.find((d) => (d.name || '').startsWith('Flipper')) || devices[0];
+    if (!device) return false;
+    if (!quiet) status(`Reconnecting to ${device.name || 'Flipper'}…`);
+    return await attach(device);
+  } catch {
+    return false; // fall back to the manual button
+  }
+}
+
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  if (reconnectAttempts >= 6) {
+    status('Disconnected — tap Connect to retry');
+    showManualButtons();
+    return;
+  }
+  const delay = Math.min(1000 * 2 ** reconnectAttempts, 8000);
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    const ok = await autoConnect(true);
+    if (!ok) scheduleReconnect();
+  }, delay);
+}
+
+function showManualButtons() {
+  $('connect').hidden = false;
+  $('connect-any').hidden = false;
+  $('disconnect').hidden = true;
+}
+
+// Explicit disconnect: stop trying to climb back on.
 $('disconnect').onclick = () => {
+  reconnectAttempts = 99; // suppress auto-reconnect until a manual connect
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   try {
     if (lastDevice?.gatt?.connected) lastDevice.gatt.disconnect();
   } catch { /* nothing useful to do */ }
   tx = null;
   $('send').disabled = true;
-  $('disconnect').hidden = true;
+  showManualButtons();
   status('Disconnected — tap Connect to retry');
 };
 
-$('connect').onclick = () => connect({ filters: [{ namePrefix: 'Flipper' }] });
-$('connect-any').onclick = () => connect({ acceptAllDevices: true });
+$('connect').onclick = () => { reconnectAttempts = 0; return connect({ filters: [{ namePrefix: 'Flipper' }] }); };
+$('connect-any').onclick = () => { reconnectAttempts = 0; return connect({ acceptAllDevices: true }); };
 
 $('send').onclick = async () => {
-  if (!tx) return;
   const text = $('text').value;
   if (!text) { status('Nothing to send'); return; }
+
+  // One tap: connect first if we are not already up.
+  if (!tx) {
+    status('Not connected — connecting…');
+    reconnectAttempts = 0;
+    const ok = (await autoConnect(false)) || (await connect({ filters: [{ namePrefix: 'Flipper' }] }));
+    if (!ok || !tx) return;
+  }
 
   try {
     $('send').disabled = true;
@@ -186,11 +261,44 @@ $('send').onclick = async () => {
   }
 };
 
+// Paste straight from the clipboard, so the flow is two taps rather than a
+// long-press-and-aim. Not available in every browser; hidden when missing.
+if (navigator.clipboard?.readText) {
+  $('paste').hidden = false;
+  $('paste').onclick = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        $('text').value = text;
+        status(`Pasted ${text.length} characters`);
+      } else {
+        status('Clipboard is empty');
+      }
+    } catch (err) {
+      status(`Paste failed — ${describeError(err)}`);
+    }
+  };
+}
+
 if (!navigator.bluetooth) {
   status('Web Bluetooth unavailable — use Bluefy on iOS or Chrome on Android');
   $('connect').disabled = true;
   $('connect-any').disabled = true;
+} else {
+  // Returning users: reconnect silently, no picker, no tap.
+  autoConnect(false).then((ok) => {
+    if (!ok) status('Not connected — tap Connect, or just tap Send');
+  });
 }
+
+// The Flipper drops the link when its app restarts the BLE core. Coming back
+// to a backgrounded page should quietly restore it.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !tx) {
+    reconnectAttempts = 0;
+    autoConnect(true);
+  }
+});
 
 // Surface anything that escapes the handlers above rather than failing silently.
 window.addEventListener('unhandledrejection', (e) => {
