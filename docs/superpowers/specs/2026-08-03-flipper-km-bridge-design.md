@@ -145,8 +145,10 @@ the characteristic.
 **Page holds nothing.** No `localStorage`, no history feature, no service-worker
 caching of content. The textarea is cleared after a successful send.
 
-**Confirm timeout: 30 seconds.** After that the buffer is zeroed and discarded,
-so a password sent to an unattended Flipper does not persist in RAM.
+**Confirm timeout: 60 seconds.** After that the buffer is zeroed and discarded,
+so a password sent to an unattended Flipper does not persist in RAM. The value
+allows time to switch applications and focus the target field on the PC after
+sending.
 
 ### Accepted limitations
 
@@ -168,7 +170,7 @@ Every failure reports back over the serial link rather than failing silently.
 | Malformed base64 | Discard, reply `ERR badb64` |
 | Character unmappable in active layout | Abort entire string, reply `ERR unmappable@<index>` (zero-based index into the decoded text) |
 | Payload exceeds 1 KB | Refuse, reply `ERR toolong`. The limit is 1024 bytes of **decoded** text; the base64 line may therefore reach ~1368 bytes |
-| No confirmation within 30 s | Zero buffer, reply `ERR timeout` |
+| No confirmation within 60 s | Zero buffer, reply `ERR timeout` |
 | BLE disconnects mid-transfer | Zero partial buffer, no reply |
 | Application exits | `cli_registry_delete_command` **before** teardown, then restore USB config |
 
