@@ -101,7 +101,7 @@ static void km_clear_pending(KmApp* app) {
 
 /* Parse and stage one received line. Replies on every rejection so the phone
  * always learns the outcome. */
-static void km_handle_line(KmApp* app, KmLine* msg) {
+static void km_handle_line(KmApp* app, const char* line) {
     /* Already holding a payload: refuse rather than silently replacing it. */
     furi_mutex_acquire(app->state_mutex, FuriWaitForever);
     bool busy = app->awaiting_confirm;
@@ -116,7 +116,6 @@ static void km_handle_line(KmApp* app, KmLine* msg) {
         return;
     }
 
-    const char* line = msg->text;
     size_t cmd_len = strlen(KM_COMMAND);
 
     if(strncmp(line, KM_COMMAND, cmd_len) != 0 || line[cmd_len] != ' ') {
@@ -175,7 +174,6 @@ int32_t km_bridge_app(void* p) {
     memset(app, 0, sizeof(KmApp));
     app->running = true;
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
-    app->line_queue = furi_message_queue_alloc(2, sizeof(KmLine));
     app->state_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
     km_layout_set_default(&app->layout, hid_asciimap, sizeof(hid_asciimap) / sizeof(uint16_t));
@@ -203,17 +201,22 @@ int32_t km_bridge_app(void* p) {
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
 
     InputEvent event;
-    KmLine line_msg;
 
     while(app->running) {
-        if(furi_message_queue_get(app->line_queue, &line_msg, 0) == FuriStatusOk) {
-            km_handle_line(app, &line_msg);
-            memset(&line_msg, 0, sizeof(line_msg));
+        if(app->line_ready) {
+            km_handle_line(app, app->ready_line);
+            memset(app->ready_line, 0, sizeof(app->ready_line));
+            app->line_ready = false; /* release only after consuming */
         }
 
         if(app->line_overflow) {
             app->line_overflow = false;
             km_ble_reply(app, "ERR toolong\r\n");
+        }
+
+        if(app->line_dropped) {
+            app->line_dropped = false;
+            km_ble_reply(app, "ERR busy\r\n");
         }
 
         furi_mutex_acquire(app->state_mutex, FuriWaitForever);
@@ -261,7 +264,6 @@ int32_t km_bridge_app(void* p) {
     view_port_free(app->view_port);
 
     furi_message_queue_free(app->input_queue);
-    furi_message_queue_free(app->line_queue);
     furi_mutex_free(app->state_mutex);
 
     furi_hal_usb_set_config(app->usb_prev, NULL);

@@ -16,8 +16,13 @@
  *   2. ble_profile_serial_set_event_callback(profile, ...)
  */
 
-/* Runs on the BLE stack thread. Must return quickly and must not block, so it
- * only accumulates a line and hands complete lines to the main thread. */
+/* Runs INSIDE the BLE core event handler, on the BLE stack's own thread, while
+ * that handler holds a mutex. Three hard rules:
+ *   - no large stack locals (its stack is small; overflowing it hangs the device)
+ *   - never block (no waiting on mutexes, queues, or the main thread)
+ *   - return promptly
+ * All buffers therefore live in the heap-allocated KmApp, and handoff is a
+ * flag rather than a queue. */
 static uint16_t km_ble_event_callback(SerialServiceEvent event, void* context) {
     KmApp* app = context;
 
@@ -27,21 +32,22 @@ static uint16_t km_ble_event_callback(SerialServiceEvent event, void* context) {
 
             if(c == '\r' || c == '\n') {
                 if(app->line_len > 0) {
-                    app->line[app->line_len] = '\0';
-                    /* Copy out; the queue owns its own storage. */
-                    KmLine msg;
-                    memcpy(msg.text, app->line, app->line_len + 1);
-                    msg.len = app->line_len;
-                    furi_message_queue_put(app->line_queue, &msg, 0);
-                    /* Secret: do not leave it lying in the accumulator. */
+                    if(!app->line_ready) {
+                        memcpy(app->ready_line, app->line, app->line_len);
+                        app->ready_line[app->line_len] = '\0';
+                        app->line_ready = true; /* publish only after the copy */
+                    } else {
+                        /* Main thread has not consumed the previous line yet. */
+                        app->line_dropped = true;
+                    }
+                    /* Secret: do not leave it in the accumulator. */
                     memset(app->line, 0, sizeof(app->line));
-                    memset(&msg, 0, sizeof(msg));
                     app->line_len = 0;
                 }
             } else if(app->line_len < KM_LINE_MAX - 1) {
                 app->line[app->line_len++] = c;
             } else {
-                /* Overlong line: drop it rather than truncate into a
+                /* Overlong line: drop it whole rather than truncate into a
                  * half-payload that might still decode. */
                 memset(app->line, 0, sizeof(app->line));
                 app->line_len = 0;
@@ -54,7 +60,7 @@ static uint16_t km_ble_event_callback(SerialServiceEvent event, void* context) {
     }
 
     /* Remaining capacity, used by the stack for flow control. */
-    return KM_LINE_MAX - app->line_len;
+    return (uint16_t)(KM_LINE_MAX - app->line_len);
 }
 
 bool km_ble_start(KmApp* app) {
@@ -72,7 +78,9 @@ bool km_ble_start(KmApp* app) {
     ble_profile_serial_set_event_callback(
         app->ble_profile, KM_LINE_MAX, km_ble_event_callback, app);
 
-    furi_hal_bt_start_advertising();
+    /* bt_profile_start already brings up advertising; calling
+     * furi_hal_bt_start_advertising() again here is redundant and risks
+     * disturbing the stack. */
     return true;
 }
 

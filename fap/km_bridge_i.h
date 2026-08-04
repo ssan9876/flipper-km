@@ -16,10 +16,10 @@
 
 typedef struct Bt Bt;
 
-typedef struct {
-    char text[KM_LINE_MAX];
-    size_t len;
-} KmLine;
+/* NOTE: never place a KM_LINE_MAX-sized object on the BLE callback's stack.
+ * That callback runs inside the BLE core event handler, on a thread whose
+ * stack is sized for the BLE stack's own use; a 1.4 KB local overflows it and
+ * hangs the device. All line buffers live in the heap-allocated KmApp. */
 
 typedef struct {
     Gui* gui;
@@ -34,14 +34,21 @@ typedef struct {
     bool usb_claimed;
 
     /* BLE serial takeover. `line` is filled by the BLE stack thread; complete
-     * lines are handed to the main thread through line_queue. */
+     * lines are handed to the main thread through ready_line + line_ready. */
     Bt* bt;
     FuriHalBleProfileBase* ble_profile;
-    FuriMessageQueue* line_queue;
+    bool ble_ready;
+
+    /* Single-producer (BLE thread) / single-consumer (main thread) handoff.
+     * The producer only writes ready_line while line_ready is false; the
+     * consumer only reads it while true. One flag, no locking, and nothing
+     * that can block the BLE event handler. */
     char line[KM_LINE_MAX];
     size_t line_len;
-    bool line_overflow;
-    bool ble_ready;
+    char ready_line[KM_LINE_MAX];
+    volatile bool line_ready;
+    volatile bool line_dropped;
+    volatile bool line_overflow;
 
     /* Pending payload, owned by the main thread. Secret: zeroed on every
      * path that leaves the awaiting state. */
